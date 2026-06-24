@@ -1,0 +1,153 @@
+<!DOCTYPE html> 
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>ESP32-CAM — Debug & Rotate</title>
+  <style>
+    body { background:#111; color:#eee; font-family:Segoe UI, Roboto, Arial; margin:0; padding:18px; }
+    .center { display:flex; gap:18px; align-items:flex-start; }
+    .panel { background:#0f1720; padding:12px; border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,0.6); }
+    #streamBox { width:820px; height:615px; display:flex; align-items:center; justify-content:center; background:#000; border-radius:6px; overflow:hidden; }
+    #camImg { max-width:none; width:auto; height:100%; transform-origin:center center; transition: transform .2s ease; }
+    button { padding:8px 12px; margin:6px; border-radius:6px; border:0; cursor:pointer; background:#1f6feb; color:#fff; }
+    .muted { opacity:.7; font-size:13px; }
+    #log { width:360px; height:420px; overflow:auto; background:#020812; color:#cfe8ff; padding:8px; border-radius:6px; font-size:13px; }
+    .urlInput { width:100%; padding:8px; margin-top:6px; border-radius:6px; border:1px solid #234; background:#071226; color:#fff; }
+    .small { font-size:13px; color:#b6c8d9; }
+    .error { color:#ff7b7b; }
+  </style>
+</head>
+<body>
+  <h2>ESP32-CAM — Debug & Rotate</h2>
+  <div class="center">
+    <div class="panel">
+      <div id="streamBox">
+        <img id="camImg" alt="ESP32 stream" src="" />
+      </div>
+
+      <!-- Controls -->
+      <div style="margin-top:10px;">
+        <label class="small">Stream URL (optional override):</label><br>
+        <input id="manualUrl" class="urlInput" placeholder="http://192.168.0.176:81/stream" />
+        <div style="margin-top:8px;">
+          <button id="tryBtn">Load / Try URLs</button>
+          <button id="rotRight">Rotate +90°</button>
+          <button id="rot180">Rotate 180°</button>
+          <button id="rotLeft">Rotate -90°</button>
+          <button id="reset">Reset</button>
+        </div>
+        <p class="muted">Tip: Leave URL blank so the script will try common ESP32 endpoints automatically.</p>
+      </div>
+    </div>
+
+    <div class="panel" style="width:360px;">
+      <div id="log"></div>
+      <div style="margin-top:8px;">
+        <strong class="small">What to try if nothing loads</strong>
+        <ol class="small">
+          <li>Open these directly in your browser address bar:
+            <ul>
+              <li><code>http://192.168.0.176</code></li>
+              <li><code>http://192.168.0.176:81/stream</code></li>
+              <li><code>http://192.168.0.176/mjpeg/1</code></li>
+            </ul>
+          </li>
+          <li>Confirm your computer is on the same network as the ESP32 (same Wi-Fi).</li>
+          <li>If you opened this file with <code>file://</code> and it blocks images, try serving it with a simple server (instructions below).</li>
+          <li>Open browser DevTools (F12) → Console and paste any errors into the log box here and send them to me.</li>
+        </ol>
+        <div style="margin-top:6px;">
+          <button id="serveTips">How to serve locally</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const ip = "192.168.0.176"; // your new IP
+    const candidates = [
+      `http://${ip}:81/stream`,
+      `http://${ip}/stream`,
+      `http://${ip}/mjpeg/1`,
+      `http://${ip}:81/mjpeg/1`,
+      `http://${ip}`
+    ];
+
+    const camImg = document.getElementById('camImg');
+    const logEl = document.getElementById('log');
+    const manualUrl = document.getElementById('manualUrl');
+
+    let rotation = 90; // default rotate 90deg for landscape
+    function applyRotation(){
+      camImg.style.transform = `rotate(${rotation}deg)`;
+      log(`Applied rotation ${rotation}deg`);
+    }
+    applyRotation();
+
+    function log(msg, isError=false){
+      const line = document.createElement('div');
+      line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+      if(isError) line.classList.add('error');
+      logEl.prepend(line);
+    }
+
+    async function tryUrls() {
+      log("Starting URL attempts...");
+      const override = manualUrl.value.trim();
+      const list = override ? [override] : candidates;
+      let success = false;
+
+      for(const url of list){
+        log(`Trying ${url} ...`);
+        // quick probe: set src and wait for load/error
+        await new Promise(resolve => {
+          let timedOut = false;
+          const to = setTimeout(()=>{ timedOut = true; camImg.src = ''; log(`Timeout loading ${url}`, true); resolve(); }, 4000);
+
+          function clean() {
+            clearTimeout(to);
+            camImg.onload = null;
+            camImg.onerror = null;
+          }
+
+          camImg.onload = () => {
+            clean();
+            log(`Loaded image from ${url}`);
+            success = true;
+            resolve();
+          };
+          camImg.onerror = (e) => {
+            clean();
+            log(`Error loading ${url} — maybe not a direct MJPEG/JPEG endpoint`, true);
+            resolve();
+          };
+
+          camImg.src = url;
+        });
+
+        if(success) break;
+      }
+
+      if(!success){
+        log("No candidate URL succeeded. Try opening the addresses in a browser tab to see raw errors.", true);
+        log("Check DevTools console for CORS or mixed-content errors.", true);
+      } else {
+        applyRotation();
+      }
+    }
+
+    document.getElementById('tryBtn').addEventListener('click', tryUrls);
+    document.getElementById('rotRight').addEventListener('click', ()=>{ rotation = (rotation + 90) % 360; applyRotation();});
+    document.getElementById('rotLeft').addEventListener('click', ()=>{ rotation = (rotation + 270) % 360; applyRotation();});
+    document.getElementById('rot180').addEventListener('click', ()=>{ rotation = (rotation + 180) % 360; applyRotation();});
+    document.getElementById('reset').addEventListener('click', ()=>{ rotation=90; applyRotation(); camImg.src=''; log('Reset rotation and cleared image');});
+
+    document.getElementById('serveTips').addEventListener('click', ()=>{
+      alert("Serve locally:\n\nPython 3: open terminal in folder with this file and run:\n\n  python -m http.server 8000\n\nThen open http://localhost:8000/esp32cam_debug.html\n\nThis avoids some browser file:// restrictions.");
+    });
+
+    // Auto-try on load
+    tryUrls();
+  </script>
+</body>
+</html>
